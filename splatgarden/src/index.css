@@ -1,0 +1,27 @@
+:root {
+  --bg: #ffffff;
+  --text: #1a1a1a;
+  --text-muted: #666666;
+
+  font-family: 'Public Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-optical-sizing: auto;
+  line-height: 1.5;
+  color-scheme: light;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100svh;
+}
