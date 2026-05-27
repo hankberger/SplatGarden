@@ -11,16 +11,20 @@
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
     "auth:generate": "better-auth generate --config server/auth.ts --output server/schema.sql",
     "auth:migrate": "better-auth migrate --config server/auth.ts",
+    "db:migrate": "tsx server/migrate.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
     "better-auth": "^1.6.11",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "google-auth-library": "^9.15.1",
     "pg": "^8.21.0",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "react-router-dom": "^7.15.1"
   },
   "devDependencies": {
     "@better-auth/cli": "^1.4.21",

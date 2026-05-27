@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { toNodeHandler, fromNodeHeaders } from 'better-auth/node'
 import { auth } from './auth'
+import colmapRouter from './routes/colmap'
 
 const app = express()
 
@@ -20,6 +21,8 @@ app.use(express.json())
 app.get('/api/hello', (_req, res) => {
   res.json({ message: 'hello from express' })
 })
+
+app.use('/api/colmap', colmapRouter)
 
 // Example protected route: returns the current user or 401.
 app.get('/api/me', async (req, res) => {

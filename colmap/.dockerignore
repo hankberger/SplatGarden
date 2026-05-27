@@ -1,0 +1,6 @@
+data/
+*.mp4
+*.mov
+*.zip
+.git/
+README.md

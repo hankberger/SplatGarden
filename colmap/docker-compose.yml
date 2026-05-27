@@ -1,0 +1,20 @@
+# Convenience wrapper so you don't have to type the long `docker run` GPU flags.
+#
+#   docker compose build
+#   docker compose run --rm colmap /workspace/<project>
+#
+# The ./data folder on the host is mounted at /workspace inside the container,
+# so put your projects there:  ./data/<project>/input/*.jpg
+services:
+  colmap:
+    build: .
+    image: splatgarden-colmap
+    volumes:
+      - ./data:/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

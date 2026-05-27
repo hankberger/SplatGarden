@@ -1,4 +1,5 @@
 import { betterAuth, type BetterAuthOptions } from 'better-auth'
+import { username } from 'better-auth/plugins'
 import { pool } from './db'
 
 // Enable Google only once its credentials exist, so email/password works
@@ -24,4 +25,7 @@ export const auth = betterAuth({
   // In dev this is the Vite origin; in prod, your deployed URL.
   trustedOrigins:
     process.env.TRUSTED_ORIGINS?.split(',').map((o) => o.trim()) ?? [],
+  // Adds unique `username` + `displayUsername`, enables sign-in by username.
+  // Username is null for social (Google) sign-ups until the user sets one.
+  plugins: [username()],
 })
