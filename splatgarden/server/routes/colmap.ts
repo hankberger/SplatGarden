@@ -1,8 +1,9 @@
 import { Router } from 'express'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { fromNodeHeaders } from 'better-auth/node'
 import { auth } from '../auth'
 import { pool } from '../db'
+import { colmapJobConfigured, triggerColmapJob } from '../run'
 import {
   extensionFor,
   mintUploadUrl,
@@ -151,6 +152,83 @@ router.post('/jobs/:id/uploaded', async (req, res) => {
     }
   }
 
+  // Kick off COLMAP processing on Cloud Run. On a successful trigger advance
+  // the job to `processing`; the container reports back via /callback. If the
+  // trigger fails, mark the job `failed` so the user sees a clear error rather
+  // than a job stuck at `uploaded`. When orchestration isn't configured we
+  // leave the job at `uploaded` (manual/dev path).
+  if (colmapJobConfigured() && job.sourceObject) {
+    try {
+      await triggerColmapJob({
+        jobId: job.id,
+        sourceGsUri: job.sourceObject,
+        outputGsPrefix: outputPrefixFor(job.sourceObject),
+        fps: job.fps,
+        matcher: 'sequential', // video frames are an ordered capture
+      })
+      await pool.query(
+        `update colmap_job set status = 'processing', updated_at = now()
+          where id = $1 and user_id = $2`,
+        [job.id, session.user.id],
+      )
+    } catch (e) {
+      console.error(`failed to start COLMAP job ${job.id}:`, e)
+      await pool.query(
+        `update colmap_job
+            set status = 'failed', error_message = $3, updated_at = now()
+          where id = $1 and user_id = $2`,
+        [job.id, session.user.id, `failed to start: ${(e as Error).message}`],
+      )
+      res.status(502).json({ error: 'failed to start processing' })
+      return
+    }
+  }
+
+  res.json({ ok: true })
+})
+
+/**
+ * Status callback from the COLMAP container (NOT a browser). Authenticated by
+ * a shared bearer token (COLMAP_CALLBACK_TOKEN), not a user session. Flips a
+ * `processing` job to its terminal state and records the output location.
+ */
+router.post('/callback', async (req, res) => {
+  const expected = process.env.COLMAP_CALLBACK_TOKEN
+  if (!expected) {
+    res.status(503).json({ error: 'callbacks not configured' })
+    return
+  }
+  const provided = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '')
+  if (!constantTimeEqual(provided, expected)) {
+    res.status(401).json({ error: 'invalid callback token' })
+    return
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>
+  const jobId = String(body.jobId ?? '')
+  const status = String(body.status ?? '')
+  if (!jobId || (status !== 'done' && status !== 'failed')) {
+    res.status(400).json({ error: 'jobId and status (done|failed) required' })
+    return
+  }
+  const errorMessage = body.errorMessage != null ? String(body.errorMessage) : null
+  const outputPrefix = body.outputPrefix != null ? String(body.outputPrefix) : null
+
+  // Guard on status='processing' so a duplicate/late callback can't resurrect
+  // or overwrite a job that already reached a terminal state.
+  const { rowCount } = await pool.query(
+    `update colmap_job
+        set status = $2,
+            error_message = $3,
+            output_object = coalesce($4, output_object),
+            updated_at = now()
+      where id = $1 and status = 'processing'`,
+    [jobId, status, errorMessage, outputPrefix],
+  )
+  if (!rowCount) {
+    res.status(404).json({ error: 'no processing job with that id' })
+    return
+  }
   res.json({ ok: true })
 })
 
@@ -204,6 +282,25 @@ router.get('/jobs/:id', async (req, res) => {
 function toInt(v: unknown, def: number) {
   const n = typeof v === 'number' ? v : Number(v)
   return Number.isFinite(n) ? Math.floor(n) : def
+}
+
+/**
+ * Derive the COLMAP output prefix (the job folder) from the source object URI
+ * by dropping the trailing `/source.<ext>`. The container writes images/ +
+ * sparse/ under this prefix.
+ *   gs://bucket/users/u/jobs/J/source.mp4 -> gs://bucket/users/u/jobs/J
+ */
+function outputPrefixFor(sourceGsUri: string): string {
+  const i = sourceGsUri.lastIndexOf('/')
+  return i > 0 ? sourceGsUri.slice(0, i) : sourceGsUri
+}
+
+/** Constant-time string compare that won't throw on length mismatch. */
+function constantTimeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  if (ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
 }
 
 export default router

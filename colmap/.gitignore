@@ -1,0 +1,7 @@
+# Generated/downloaded outputs — never commit, can be hundreds of MB.
+data/
+
+# Debug log artifacts from local docker runs / probe downloads.
+*.log
+logs.txt
+probe-*.txt

@@ -1,16 +1,46 @@
-# Convenience wrapper so you don't have to type the long `docker run` GPU flags.
+# Local-dev compose: bind-mount ./data into /workspace and skip the GCS shim
+# by overriding ENTRYPOINT back to run_colmap. The image's default entrypoint
+# is the Cloud Run GCS shim — see Dockerfile.
 #
 #   docker compose build
 #   docker compose run --rm colmap /workspace/<project>
+#   docker compose run --rm colmap --video /workspace/scan.mp4 --fps 3 \
+#                                  --matcher sequential /workspace/scan
 #
-# The ./data folder on the host is mounted at /workspace inside the container,
-# so put your projects there:  ./data/<project>/input/*.jpg
+# To smoke-test the GCS shim itself, use the `shim` service (env-driven, no
+# CLI args) — it requires ADC and real GCS URIs.
 services:
   colmap:
     build: .
     image: splatgarden-colmap
+    entrypoint: /usr/local/bin/run_colmap
     volumes:
       - ./data:/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  shim:
+    image: splatgarden-colmap
+    # Uses the image's default ENTRYPOINT (colmap-entrypoint).
+    # Provide SOURCE_GS_URI / OUTPUT_GS_PREFIX / JOB_ID via the shell env or
+    # an .env file. Mount your ADC so `gcloud storage` can authenticate.
+    environment:
+      SOURCE_GS_URI:    ${SOURCE_GS_URI:-}
+      OUTPUT_GS_PREFIX: ${OUTPUT_GS_PREFIX:-}
+      JOB_ID:           ${JOB_ID:-}
+      FPS:              ${FPS:-2}
+      MATCHER:          ${MATCHER:-sequential}
+      CALLBACK_URL:     ${CALLBACK_URL:-}
+      CALLBACK_TOKEN:   ${CALLBACK_TOKEN:-}
+      CLOUDSDK_CORE_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+    volumes:
+      - ./data:/workspace
+      - ${APPDATA}/gcloud:/root/.config/gcloud:ro
     deploy:
       resources:
         reservations:

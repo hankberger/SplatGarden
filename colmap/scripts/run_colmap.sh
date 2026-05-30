@@ -94,6 +94,10 @@ mkdir -p "$DISTORTED/sparse"
 DB="$DISTORTED/database.db"
 
 # ---- 1. feature extraction -------------------------------------------------
+# NOTE: COLMAP renamed the GPU toggle from --SiftExtraction.use_gpu to
+# --FeatureExtraction.use_gpu in dev builds *after* 3.11. We pin 3.11.1
+# (see Dockerfile.gpu), which still uses the old --Sift* names. If you bump
+# COLMAP_REF past the rename, switch these back to --Feature*.use_gpu.
 log "Feature extraction (GPU=$USE_GPU, camera=$CAMERA, single_camera=$SINGLE_CAMERA)"
 colmap feature_extractor \
   --database_path "$DB" \

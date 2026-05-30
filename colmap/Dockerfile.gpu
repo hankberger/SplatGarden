@@ -1,0 +1,86 @@
+# syntax=docker/dockerfile:1.6
+#
+# COLMAP built from source for Cloud Run L4 — the GPU build.
+#
+# Cloud Run's L4 host driver is 535.274.02 → CUDA max 12.2. Upstream
+# `colmap/colmap:latest` is built against a newer CUDA toolkit, so its PTX
+# can't be JIT-compiled by that driver ("PTX was compiled with an unsupported
+# toolchain"). We work around this with two things:
+#
+#   1. Build against CUDA 12.2.2 toolkit — matches the driver's max.
+#   2. Emit native SASS for sm_89 (L4) via -DCMAKE_CUDA_ARCHITECTURES=89,
+#      so PTX JIT is never invoked at runtime.
+#
+# See memory: colmap-cloud-run.md for the history of how we got here.
+
+# ============================================================================
+# Stage 1 — build COLMAP from source
+# ============================================================================
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04 AS build
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git cmake ninja-build build-essential ca-certificates \
+      libboost-program-options-dev libboost-filesystem-dev \
+      libboost-graph-dev libboost-system-dev \
+      libeigen3-dev libflann-dev libfreeimage-dev libmetis-dev \
+      libgoogle-glog-dev libgflags-dev \
+      libgtest-dev libgmock-dev \
+      libsqlite3-dev libglew-dev \
+      libcgal-dev libceres-dev \
+      libcurl4-openssl-dev liblz4-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# COLMAP ref — bump and rebuild as upstream tags appear.
+# `3.11.1` is a known-stable release.
+ARG COLMAP_REF=3.11.1
+RUN git clone --depth 1 --branch ${COLMAP_REF} \
+      https://github.com/colmap/colmap.git /src/colmap
+
+WORKDIR /src/colmap/build
+RUN cmake .. -GNinja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/opt/colmap \
+      -DCUDA_ENABLED=ON \
+      -DCMAKE_CUDA_ARCHITECTURES=89 \
+      -DGUI_ENABLED=OFF \
+      -DTESTS_ENABLED=OFF && \
+    ninja -j"$(nproc)" && \
+    ninja install
+
+# ============================================================================
+# Stage 2 — slim runtime
+# ============================================================================
+FROM nvidia/cuda:12.2.2-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+# Cloud Run prepends /usr/local/nvidia/lib64 to LD_LIBRARY_PATH automatically.
+# Leave this alone — fighting it breaks the driver lookup.
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg python3 curl jq ca-certificates gnupg apt-transport-https \
+      libboost-program-options1.74.0 libboost-filesystem1.74.0 \
+      libboost-graph1.74.0 libboost-system1.74.0 \
+      libflann1.9 libfreeimage3 libmetis5 \
+      libgoogle-glog0v5 libgflags2.2 \
+      libsqlite3-0 libglew2.2 \
+      libceres2 \
+      libcurl4 liblz4-1 && \
+    curl -sSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+      | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+      > /etc/apt/sources.list.d/google-cloud-sdk.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends google-cloud-cli && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /opt/colmap /opt/colmap
+ENV PATH=/opt/colmap/bin:${PATH}
+
+COPY scripts/run_colmap.sh /usr/local/bin/run_colmap
+COPY scripts/entrypoint.sh /usr/local/bin/colmap-entrypoint
+RUN chmod +x /usr/local/bin/run_colmap /usr/local/bin/colmap-entrypoint
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/colmap-entrypoint"]
